@@ -66,5 +66,5 @@ docker stack deploy -c docker-compose.yml ems
 
 Detailed deployment and architecture diagrams are available in the [docs/images](./docs/images) directory.
 
-![Deployment Architecture](docs/images/umldeploymentdiagramEMS.png)
+![Deployment Architecture](docs/images/deployment3.png)
 *(See `docs/images/` for more details on component interaction and Swarm configuration).*
