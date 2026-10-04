@@ -1,0 +1,21 @@
+{
+  "profiles": {
+    "Docker Compose": {
+      "commandName": "DockerCompose",
+      "commandVersion": "1.0",
+      "serviceActions": {
+        "auth-service": "StartDebugging",
+        "device-service": "StartDebugging",
+        "frontend": "StartWithoutDebugging",
+        "rabbitmq": "StartWithoutDebugging",
+        "sqlserver": "StartWithoutDebugging",
+        "traefik": "StartWithoutDebugging",
+        "user-service": "StartDebugging",
+        "simulator-service": "StartDebugging",
+        "monitoring-service": "StartDebugging",
+        "customer-support-service": "StartDebugging",
+        "websocket-service": "StartDebugging"
+      }
+    }
+  }
+}

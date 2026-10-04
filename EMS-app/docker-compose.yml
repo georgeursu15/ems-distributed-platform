@@ -1,0 +1,279 @@
+version: '3.8'
+
+services:
+  frontend:
+    image: frontendservice:latest 
+    ports: 
+      - target: 80
+        published: 5173
+        protocol: tcp
+        mode: host
+    networks: 
+      - ems-net
+    deploy: 
+      replicas:  1
+      restart_policy: 
+        condition: on-failure
+
+  rabbitmq:
+    image:  rabbitmq:3-management
+    ports:
+      - target:  5672
+        published: 5672
+        protocol: tcp
+        mode: host
+      - target: 15672
+        published:  15672
+        protocol: tcp
+        mode: host
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    volumes: 
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ems-net
+    deploy: 
+      replicas: 1
+      restart_policy:
+        condition:  on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.docker.localhost`)"
+        - "traefik.http.routers.rabbitmq.entrypoints=web"
+        - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+
+  traefik:
+      image: traefik:v3.6
+      command:
+        - "--experimental.plugins.jwt-validation-middleware.modulename=github.com/legege/jwt-validation-middleware"
+        - "--experimental.plugins.jwt-validation-middleware.version=v0.2.1"
+        - "--api.insecure=true"
+        - "--api.dashboard=true"
+        - "--providers.swarm=true"
+        - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
+        - "--providers.swarm.exposedbydefault=false"
+        - "--providers.swarm.network=ems_ems-net"
+        - "--providers.file.directory=/etc/traefik"
+        - "--providers.file.watch=true"
+        - "--entrypoints.web.address=:80"
+        - "--entrypoints.websecure.address=:443"
+        - "--accesslog=true"
+        - "--log.level=DEBUG"
+        
+      ports: 
+        - target: 80
+          published: 80
+          protocol: tcp
+          mode: host
+        - target: 8080
+          published: 8080
+          protocol: tcp
+          mode: host
+      volumes: 
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+        - ./traefik:/etc/traefik:ro
+      networks: 
+        - ems-net
+      deploy:
+        mode: replicated
+        replicas: 1
+        restart_policy:
+          condition: on-failure
+        placement:  
+          constraints:
+            - node.role==manager
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${DB_PASSWORD:-Sqlserver15!} 
+      - MSSQL_PID=Developer
+    ports: 
+      - target: 1433
+        published: 1433
+        protocol: tcp
+        mode: host
+    networks: 
+      - ems-net
+    deploy: 
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  auth-service: 
+    image: authservice:latest
+    environment: 
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=AuthDB;User Id=sa;Password=${DB_PASSWORD:-Sqlserver15!};TrustServerCertificate=True;
+    networks:
+      - ems-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:  
+        - "traefik.enable=true"
+        - "traefik.http.routers.auth.rule=Host(`auth.docker.localhost`)"
+        - "traefik.http.routers.auth.entrypoints=web"
+        - "traefik.http.services.auth.loadbalancer.server.port=8080"
+        - "traefik.http.routers.auth.middlewares=cors-headers@file"
+
+  user-service:
+    image: userservice:latest
+    environment: 
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=UserDB;User Id=sa;Password=${DB_PASSWORD:-Sqlserver15!};TrustServerCertificate=True;
+    networks:
+      - ems-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels: 
+        - "traefik.enable=true"
+        - "traefik.http.routers.user.rule=Host(`user.docker.localhost`)"
+        - "traefik.http.routers.user.entrypoints=web"
+        - "traefik.http.services.user.loadbalancer.server.port=8080"
+        - "traefik.http.routers.user.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+  device-service:
+    image:  deviceservice:latest
+    environment: 
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=DeviceDB;User Id=sa;Password=${DB_PASSWORD:-Sqlserver15!};TrustServerCertificate=True;
+    networks: 
+      - ems-net
+    deploy:  
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.device.rule=Host(`device.docker.localhost`)"
+        - "traefik.http.routers.device.entrypoints=web"
+        - "traefik.http.services.device.loadbalancer.server.port=8080"
+        - "traefik.http.routers.device.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+  simulator-service:
+    image: simulatorservice:latest
+    environment:  
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Port=5672
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=admin123
+      - RabbitMQ__QueueName=device-data-queue
+    networks:
+      - ems-net
+    deploy: 
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:  
+        - "traefik.enable=true"
+        - "traefik.http.routers.simulator.rule=Host(`simulator.docker.localhost`)"
+        - "traefik.http.routers.simulator.entrypoints=web"
+        - "traefik.http.services.simulator.loadbalancer.server.port=8080"
+        - "traefik.http.routers.simulator.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+  load-balancer-service:
+    image: loadbalancerservice:latest
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Port=5672
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=admin123
+      - LoadBalancer__CentralQueueName=device-data-queue
+      - LoadBalancer__IngestQueuePattern=ingest-queue-{0}
+      - LoadBalancer__Strategy=ConsistentHashing
+      - LoadBalancer__ReplicaCount=3
+    networks:
+      - ems-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:  
+        - "traefik.enable=true"
+        - "traefik.http.routers.loadbalancer.rule=Host(`loadbalancer.docker.localhost`)"
+        - "traefik.http.routers.loadbalancer.entrypoints=web"
+        - "traefik.http.services.loadbalancer.loadbalancer.server.port=8080"
+
+  monitoring-service:
+    image: monitoringservice:latest
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ReplicaId={{.Task.Slot}}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Port=5672
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=admin123
+      - RabbitMQ__IngestQueue=ingest-queue-{{.Task.Slot}}
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=MonitoringDB;User Id=sa;Password=${DB_PASSWORD:-Sqlserver15!};TrustServerCertificate=True;
+    networks:  
+      - ems-net
+    deploy:
+      replicas:  3
+      restart_policy: 
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.monitoring.rule=Host(`monitoring.docker.localhost`)"
+        - "traefik.http.routers.monitoring.entrypoints=web"
+        - "traefik.http.services.monitoring.loadbalancer.server.port=8080"
+        - "traefik.http.routers.monitoring.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+  customer-support-service: 
+    image: customersupportservice:latest
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=SupportDB;User Id=sa;Password=${DB_PASSWORD:-Sqlserver15!};TrustServerCertificate=True;
+      - OpenAI__ApiKey=${OPENAI_API_KEY:-}
+    networks: 
+      - ems-net
+    deploy:  
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.customersupport.rule=Host(`customersupport.docker.localhost`)"
+        - "traefik.http.routers.customersupport.entrypoints=web"
+        - "traefik.http.services.customersupport.loadbalancer.server.port=8080"
+        - "traefik.http.routers.customersupport.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+  websocket-service:
+    image: websocketservice:latest
+    environment:  
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+    networks:
+      - ems-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels: 
+        - "traefik.enable=true"
+        - "traefik.http.routers.websocket.rule=Host(`websocket.docker.localhost`)"
+        - "traefik.http.routers.websocket.entrypoints=web"
+        - "traefik.http.services.websocket.loadbalancer.server.port=8080"
+        - "traefik.http.routers.websocket.middlewares=cors-headers@file,my-jwt-middleware@file"
+
+networks:
+  ems-net: 
+    driver: overlay
+    attachable: true
+
+volumes: 
+  rabbitmq_data: 
